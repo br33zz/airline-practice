@@ -61,6 +61,9 @@ class InMemoryAirlineRepository implements AirlineRepository {
   @override
   Future<PageResult<Flight>> findFlights(ListQuery q) async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (q.search.trim().toLowerCase() == 'ошибка') {
+      throw StateError('Тестовая ошибка загрузки данных');
+    }
     final needle = q.search.trim().toLowerCase();
     var rows = _flights
         .where(
@@ -88,6 +91,9 @@ class InMemoryAirlineRepository implements AirlineRepository {
   @override
   Future<PageResult<Passenger>> findPassengers(ListQuery q) async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (q.search.trim().toLowerCase() == 'ошибка') {
+      throw StateError('Тестовая ошибка загрузки данных');
+    }
     final needle = q.search.trim().toLowerCase();
     var rows = _passengers
         .where(
