@@ -1,93 +1,233 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
+
+import '../core/api_exceptions.dart';
+import '../models/airline_models.dart';
 import '../models/list_query.dart';
-import '../state/airline_notifier.dart';
+import '../models/page_result.dart';
+import '../repositories/airline_repository.dart';
+import '../widgets/airline_scaffold.dart';
 import '../widgets/entity_table.dart';
 
-class EntityListScreen<T> extends StatefulWidget {
-  final String title, path, filterLabel;
+class EntityListScreen extends StatefulWidget {
+  final EntityKind kind;
   final Uri uri;
-  final AirlineListNotifier<T> notifier;
-  final List<String> filters;
-  final List<TableColumnSpec<T>> columns;
-  final bool Function(T) isDeleted;
-  const EntityListScreen({
-    super.key,
-    required this.title,
-    required this.path,
-    required this.filterLabel,
-    required this.uri,
-    required this.notifier,
-    required this.filters,
-    required this.columns,
-    required this.isDeleted,
-  });
+  const EntityListScreen({super.key, required this.kind, required this.uri});
+
   @override
-  State<EntityListScreen<T>> createState() => _EntityListScreenState<T>();
+  State<EntityListScreen> createState() => _EntityListScreenState();
 }
 
-class _EntityListScreenState<T> extends State<EntityListScreen<T>> {
+class _EntityListScreenState extends State<EntityListScreen> {
   late final TextEditingController search;
-  bool initialized = false;
+  late ListQuery query;
+  PageResult<AirlineModel>? result;
+  Object? error;
+  bool loading = true;
+  Timer? debounce;
+  int loadVersion = 0;
+  final Set<int> selectedIds = {};
+
   @override
   void initState() {
     super.initState();
-    search = TextEditingController(
-      text: widget.uri.queryParameters['search'] ?? '',
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initialize());
+    query = _queryFromUri(widget.uri);
+    search = TextEditingController(text: query.search);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
-  Future<void> _initialize() async {
-    if (initialized) return;
-    initialized = true;
-    final p = widget.uri.queryParameters;
-    final sort = (p['sort'] ?? 'id,asc').split(',');
-    await widget.notifier.applyQuery(
-      ListQuery(
-        search: p['search'] ?? '',
-        filter: p['filter'] ?? '',
-        sortField: sort.first,
-        sortAscending: sort.length < 2 || sort[1] != 'desc',
-        page: int.tryParse(p['page'] ?? '') ?? 1,
-        size: int.tryParse(p['size'] ?? '') ?? 10,
-        includeDeleted: p['deleted'] == 'true',
-      ),
+  @override
+  void didUpdateWidget(covariant EntityListScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.kind != widget.kind || oldWidget.uri != widget.uri) {
+      selectedIds.clear();
+      query = _queryFromUri(widget.uri);
+      search.text = query.search;
+      _load();
+    }
+  }
+
+  ListQuery _queryFromUri(Uri uri) {
+    final values = uri.queryParameters;
+    final sort = (values['sort'] ?? 'name,asc').split(',');
+    return ListQuery(
+      search: values['search'] ?? '',
+      filter: values['filter'] ?? '',
+      sortField: sort.first,
+      sortAscending: sort.length < 2 || sort[1] != 'desc',
+      includeDeleted: values['deleted'] == 'true',
+      page: int.tryParse(values['page'] ?? '') ?? 1,
+      size: int.tryParse(values['size'] ?? '') ?? 5,
     );
   }
 
-  void _url(ListQuery q) {
+  Future<void> _load() async {
+    if (!mounted) return;
+    final version = ++loadVersion;
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final value = await context.read<AirlineRepository>().find(
+        widget.kind,
+        query,
+      );
+      if (mounted && version == loadVersion) {
+        setState(() {
+          result = value;
+          loading = false;
+        });
+      }
+    } catch (exception) {
+      if (mounted && version == loadVersion) {
+        setState(() {
+          error = exception;
+          loading = false;
+        });
+      }
+    }
+  }
+
+  void _apply(ListQuery next) {
+    query = next;
     context.go(
       Uri(
-        path: widget.path,
+        path: '/${widget.kind.name}',
         queryParameters: {
-          if (q.search.isNotEmpty) 'search': q.search,
-          if (q.filter.isNotEmpty) 'filter': q.filter,
-          'sort': '${q.sortField},${q.sortAscending ? 'asc' : 'desc'}',
-          'page': '${q.page}',
-          'size': '${q.size}',
-          if (q.includeDeleted) 'deleted': 'true',
+          if (query.search.isNotEmpty) 'search': query.search,
+          if (query.filter.isNotEmpty) 'filter': query.filter,
+          'sort': '${query.sortField},${query.sortAscending ? 'asc' : 'desc'}',
+          'page': '${query.page}',
+          'size': '${query.size}',
+          if (query.includeDeleted) 'deleted': 'true',
         },
       ).toString(),
     );
+    _load();
   }
 
-  Future<void> _apply(ListQuery q) async {
-    _url(q);
-    await widget.notifier.applyQuery(q);
-  }
+  List<String> _filters(AirlineRepository repository) => switch (widget.kind) {
+    EntityKind.flights => ['По расписанию', 'Посадка', 'Задержан'],
+    EntityKind.aircraft =>
+      repository.aircraft.map((e) => e.type).toSet().toList(),
+    EntityKind.pilots =>
+      repository.pilots.map((e) => e.qualification).toSet().toList(),
+    EntityKind.services => ['Платно', 'Бесплатно'],
+    EntityKind.passengers =>
+      repository.passengers.map((e) => e.country).toSet().toList(),
+  };
 
-  Future<void> _confirmDelete(T item) async {
-    final hard = widget.isDeleted(item);
-    final ok =
+  List<TableColumnSpec<AirlineModel>> _columns(
+    AirlineRepository repository,
+  ) => switch (widget.kind) {
+    EntityKind.flights => [
+      TableColumnSpec('Рейс', 'name', (item) => (item as Flight).number),
+      TableColumnSpec(
+        'Направление',
+        'destination',
+        (item) => (item as Flight).destination,
+      ),
+      TableColumnSpec(
+        'Вылет',
+        'departure',
+        (item) => _dateTime((item as Flight).departure),
+      ),
+      TableColumnSpec(
+        'Самолёт',
+        'aircraft',
+        (item) => repository.aircraftName((item as Flight).aircraftId),
+      ),
+      TableColumnSpec('Мест', 'seats', (item) => '${(item as Flight).seats}'),
+    ],
+    EntityKind.aircraft => [
+      TableColumnSpec(
+        'Регистрация',
+        'name',
+        (item) => (item as Aircraft).registrationNumber,
+      ),
+      TableColumnSpec('Модель', 'model', (item) => (item as Aircraft).model),
+      TableColumnSpec('Тип', 'type', (item) => (item as Aircraft).type),
+      TableColumnSpec(
+        'Вместимость',
+        'capacity',
+        (item) => '${(item as Aircraft).capacity}',
+      ),
+    ],
+    EntityKind.pilots => [
+      TableColumnSpec('ФИО', 'name', (item) => (item as Pilot).fullName),
+      TableColumnSpec(
+        'Лицензия',
+        'license',
+        (item) => (item as Pilot).licenseNumber,
+      ),
+      TableColumnSpec(
+        'Квалификация',
+        'qualification',
+        (item) => (item as Pilot).qualification,
+      ),
+      TableColumnSpec(
+        'Стаж',
+        'experience',
+        (item) => '${(item as Pilot).experienceYears} лет',
+      ),
+    ],
+    EntityKind.services => [
+      TableColumnSpec(
+        'Название',
+        'name',
+        (item) => (item as AirlineService).name,
+      ),
+      TableColumnSpec(
+        'Описание',
+        'description',
+        (item) => (item as AirlineService).description,
+      ),
+      TableColumnSpec(
+        'Стоимость',
+        'price',
+        (item) => '${(item as AirlineService).price.toStringAsFixed(0)} ₽',
+      ),
+    ],
+    EntityKind.passengers => [
+      TableColumnSpec('ФИО', 'name', (item) => (item as Passenger).fullName),
+      TableColumnSpec(
+        'Паспорт',
+        'passport',
+        (item) => (item as Passenger).passport,
+      ),
+      TableColumnSpec(
+        'Страна',
+        'country',
+        (item) => (item as Passenger).country,
+      ),
+      TableColumnSpec('Почта', 'email', (item) => (item as Passenger).email),
+      TableColumnSpec(
+        'Билет',
+        'ticket',
+        (item) => (item as Passenger).ticket.number,
+      ),
+    ],
+  };
+
+  String _dateTime(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${value.year} '
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+  Future<void> _delete(AirlineModel item) async {
+    final hard = item.deletedAt != null;
+    final confirmed =
         await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
             title: Text(hard ? 'Удалить навсегда?' : 'Удалить запись?'),
             content: Text(
               hard
-                  ? 'Восстановить запись после этого будет невозможно.'
-                  : 'Запись можно будет восстановить.',
+                  ? 'После физического удаления восстановление невозможно.'
+                  : 'Запись будет скрыта, но её можно восстановить.',
             ),
             actions: [
               TextButton(
@@ -102,208 +242,249 @@ class _EntityListScreenState<T> extends State<EntityListScreen<T>> {
           ),
         ) ??
         false;
-    if (ok) {
-      await widget.notifier.remove(widget.notifier.idOf(item), hard: hard);
+    if (!confirmed || !mounted) return;
+    try {
+      await context.read<AirlineRepository>().delete(
+        widget.kind,
+        item.id,
+        hard: hard,
+      );
+      await _load();
+    } on ApiException catch (exception) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(exception.message)));
+      }
     }
   }
 
-  Widget _content(AirlineListNotifier<T> n) {
-    if (n.status == LoadStatus.loading || n.status == LoadStatus.idle) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (n.status == LoadStatus.error) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 56),
-            Text(n.error ?? 'Ошибка'),
-            FilledButton(onPressed: n.load, child: const Text('Повторить')),
-          ],
-        ),
+  Future<void> _deleteSelected() async {
+    if (selectedIds.isEmpty) return;
+    try {
+      final count = await context.read<AirlineRepository>().deleteMany(
+        widget.kind,
+        selectedIds.toList(),
       );
+      selectedIds.clear();
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Удалено записей: $count')));
+      }
+    } on ApiException catch (exception) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(exception.message)));
+      }
     }
-    if (n.result.items.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.search_off, size: 64),
-            Text('Ничего не найдено'),
-          ],
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final repository = context.watch<AirlineRepository>();
+    final pageResult = result;
+    return AirlineScaffold(
+      title: 'Авиакомпания • ${widget.kind.title}',
+      selected: widget.kind,
+      actions: [
+        if (selectedIds.isNotEmpty)
+          IconButton(
+            tooltip: 'Удалить выбранные (${selectedIds.length})',
+            onPressed: _deleteSelected,
+            icon: const Icon(Icons.delete_sweep_outlined),
+          ),
+        IconButton(
+          tooltip: 'Добавить',
+          onPressed: () => context.go('/${widget.kind.name}/new'),
+          icon: const Icon(Icons.add),
         ),
-      );
-    }
-    return SingleChildScrollView(
-      child: EntityTable<T>(
-        items: n.result.items,
-        columns: widget.columns,
-        idOf: n.idOf,
-        isDeleted: widget.isDeleted,
-        selected: n.selected,
-        sortField: n.query.sortField,
-        sortAscending: n.query.sortAscending,
-        onToggle: n.toggle,
-        onSort: (field) => _apply(
-          n.query.copyWith(
-            sortField: field,
-            sortAscending: field == n.query.sortField
-                ? !n.query.sortAscending
-                : true,
+      ],
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1250),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 300,
+                      child: TextField(
+                        controller: search,
+                        onChanged: (value) {
+                          debounce?.cancel();
+                          debounce = Timer(
+                            const Duration(milliseconds: 350),
+                            () =>
+                                _apply(query.copyWith(search: value, page: 1)),
+                          );
+                        },
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
+                          labelText: 'Поиск',
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 220,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: query.filter,
+                        decoration: const InputDecoration(labelText: 'Фильтр'),
+                        items: ['', ..._filters(repository)]
+                            .map(
+                              (value) => DropdownMenuItem(
+                                value: value,
+                                child: Text(value.isEmpty ? 'Все' : value),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) => _apply(
+                          query.copyWith(filter: value ?? '', page: 1),
+                        ),
+                      ),
+                    ),
+                    FilterChip(
+                      label: const Text('Показать удалённые'),
+                      selected: query.includeDeleted,
+                      onSelected: (value) => _apply(
+                        query.copyWith(includeDeleted: value, page: 1),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : error != null
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.cloud_off, size: 64),
+                              const SizedBox(height: 12),
+                              Text(
+                                error is ApiException
+                                    ? (error as ApiException).message
+                                    : 'Не удалось загрузить данные.',
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 12),
+                              FilledButton.icon(
+                                onPressed: _load,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Повторить загрузку'),
+                              ),
+                            ],
+                          ),
+                        )
+                      : pageResult == null || pageResult.items.isEmpty
+                      ? const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.search_off, size: 64),
+                              Text('Ничего не найдено'),
+                            ],
+                          ),
+                        )
+                      : EntityTable<AirlineModel>(
+                          items: pageResult.items,
+                          columns: _columns(repository),
+                          idOf: (item) => item.id,
+                          isDeleted: (item) => item.deletedAt != null,
+                          sortField: query.sortField,
+                          sortAscending: query.sortAscending,
+                          selectedIds: selectedIds,
+                          onSort: (field) => _apply(
+                            query.copyWith(
+                              sortField: field,
+                              sortAscending: query.sortField == field
+                                  ? !query.sortAscending
+                                  : true,
+                              page: 1,
+                            ),
+                          ),
+                          onOpen: (item) =>
+                              context.go('/${widget.kind.name}/${item.id}'),
+                          onSelected: (item, selected) => setState(() {
+                            if (selected) {
+                              selectedIds.add(item.id);
+                            } else {
+                              selectedIds.remove(item.id);
+                            }
+                          }),
+                          onEdit: (item) => context.go(
+                            '/${widget.kind.name}/${item.id}/edit',
+                          ),
+                          onDelete: _delete,
+                          onRestore: (item) async {
+                            await repository.restore(widget.kind, item.id);
+                            await _load();
+                          },
+                        ),
+                ),
+                if (pageResult != null)
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      IconButton(
+                        tooltip: 'Предыдущая',
+                        onPressed: pageResult.hasPrevious
+                            ? () => _apply(
+                                query.copyWith(page: pageResult.page - 1),
+                              )
+                            : null,
+                        icon: const Icon(Icons.chevron_left),
+                      ),
+                      Text(
+                        'Страница ${pageResult.page} из ${pageResult.totalPages} · Всего: ${pageResult.total}',
+                      ),
+                      IconButton(
+                        tooltip: 'Следующая',
+                        onPressed: pageResult.hasNext
+                            ? () => _apply(
+                                query.copyWith(page: pageResult.page + 1),
+                              )
+                            : null,
+                        icon: const Icon(Icons.chevron_right),
+                      ),
+                      const SizedBox(width: 12),
+                      DropdownButton<int>(
+                        value: query.size,
+                        items: [5, 10, 25]
+                            .map(
+                              (value) => DropdownMenuItem(
+                                value: value,
+                                child: Text('$value'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) =>
+                            _apply(query.copyWith(size: value, page: 1)),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
           ),
         ),
-        onDelete: _confirmDelete,
-        onRestore: (x) => n.restoreOne(n.idOf(x)),
       ),
     );
   }
 
-  Widget _pager(AirlineListNotifier<T> n) => Wrap(
-    alignment: WrapAlignment.center,
-    crossAxisAlignment: WrapCrossAlignment.center,
-    children: [
-      IconButton(
-        tooltip: 'Первая',
-        onPressed: n.result.hasPrevious
-            ? () => _apply(n.query.copyWith(page: 1))
-            : null,
-        icon: const Icon(Icons.first_page),
-      ),
-      IconButton(
-        tooltip: 'Предыдущая',
-        onPressed: n.result.hasPrevious
-            ? () => _apply(n.query.copyWith(page: n.result.page - 1))
-            : null,
-        icon: const Icon(Icons.chevron_left),
-      ),
-      Text(
-        'Страница ${n.result.page} из ${n.result.totalPages} • Всего: ${n.result.total}',
-      ),
-      IconButton(
-        tooltip: 'Следующая',
-        onPressed: n.result.hasNext
-            ? () => _apply(n.query.copyWith(page: n.result.page + 1))
-            : null,
-        icon: const Icon(Icons.chevron_right),
-      ),
-      IconButton(
-        tooltip: 'Последняя',
-        onPressed: n.result.hasNext
-            ? () => _apply(n.query.copyWith(page: n.result.totalPages))
-            : null,
-        icon: const Icon(Icons.last_page),
-      ),
-      const SizedBox(width: 12),
-      DropdownButton<int>(
-        value: n.query.size,
-        items: [10, 25, 50]
-            .map((x) => DropdownMenuItem(value: x, child: Text('$x записей')))
-            .toList(),
-        onChanged: (v) => _apply(n.query.copyWith(size: v)),
-      ),
-    ],
-  );
-  @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: widget.notifier,
-    builder: (_, __) {
-      final n = widget.notifier;
-      return Scaffold(
-        appBar: AppBar(
-          title: Text('Авиакомпания • ${widget.title}'),
-          actions: [
-            TextButton.icon(
-              onPressed: () => context.go(
-                widget.path == '/flights' ? '/passengers' : '/flights',
-              ),
-              icon: const Icon(Icons.swap_horiz),
-              label: Text(widget.path == '/flights' ? 'Пассажиры' : 'Рейсы'),
-            ),
-          ],
-        ),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1200),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      SizedBox(
-                        width: 300,
-                        child: TextField(
-                          controller: search,
-                          onChanged: (v) {
-                            n.search(v);
-                            Future.delayed(
-                              const Duration(milliseconds: 360),
-                              () {
-                                if (mounted && search.text == v) {
-                                  _url(n.query.copyWith(search: v));
-                                }
-                              },
-                            );
-                          },
-                          decoration: const InputDecoration(
-                            prefixIcon: Icon(Icons.search),
-                            labelText: 'Поиск',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 210,
-                        child: DropdownButtonFormField<String>(
-                          initialValue: n.query.filter,
-                          decoration: InputDecoration(
-                            labelText: widget.filterLabel,
-                            border: const OutlineInputBorder(),
-                          ),
-                          items: ['', ...widget.filters]
-                              .map(
-                                (x) => DropdownMenuItem(
-                                  value: x,
-                                  child: Text(x.isEmpty ? 'Все' : x),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) =>
-                              _apply(n.query.copyWith(filter: v ?? '')),
-                        ),
-                      ),
-                      FilterChip(
-                        label: const Text('Показать удалённые'),
-                        selected: n.query.includeDeleted,
-                        onSelected: (v) =>
-                            _apply(n.query.copyWith(includeDeleted: v)),
-                      ),
-                      if (n.selected.isNotEmpty)
-                        FilledButton.icon(
-                          onPressed: n.removeSelected,
-                          icon: const Icon(Icons.delete),
-                          label: Text('Удалить (${n.selected.length})'),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(child: _content(n)),
-                  const SizedBox(height: 12),
-                  _pager(n),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    },
-  );
   @override
   void dispose() {
+    debounce?.cancel();
     search.dispose();
     super.dispose();
   }

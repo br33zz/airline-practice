@@ -1,6 +1,6 @@
 {
-    "name": "airline_practice",
-    "short_name": "airline_practice",
+    "name": "Авиакомпания",
+    "short_name": "Авиакомпания",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

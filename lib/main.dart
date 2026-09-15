@@ -1,22 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:provider/provider.dart';
-import 'app.dart';
-import 'repositories/airline_repository.dart';
-import 'state/airline_notifier.dart';
 
-void main() {
+import 'app.dart';
+import 'core/api_client.dart';
+import 'repositories/airline_repository.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
-  final repository = InMemoryAirlineRepository();
+  late final AirlineRepository repository;
+  final dio = buildDio(tokenProvider: () => repository.accessToken);
+  repository = AirlineRepository(dio);
+  repository.initialize();
   runApp(
-    MultiProvider(
-      providers: [
-        Provider<AirlineRepository>.value(value: repository),
-        ChangeNotifierProvider(create: (_) => FlightListNotifier(repository)),
-        ChangeNotifierProvider(
-          create: (_) => PassengerListNotifier(repository),
-        ),
-      ],
+    ChangeNotifierProvider(
+      create: (_) => repository,
       child: const AirlineApp(),
     ),
   );

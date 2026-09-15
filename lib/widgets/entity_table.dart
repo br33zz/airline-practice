@@ -11,23 +11,26 @@ class EntityTable<T> extends StatelessWidget {
   final List<TableColumnSpec<T>> columns;
   final int Function(T) idOf;
   final bool Function(T) isDeleted;
-  final Set<int> selected;
   final String sortField;
   final bool sortAscending;
-  final ValueChanged<int> onToggle;
+  final Set<int> selectedIds;
   final ValueChanged<String> onSort;
-  final void Function(T) onDelete, onRestore;
+  final void Function(T, bool) onSelected;
+  final void Function(T) onOpen, onEdit, onDelete, onRestore;
+
   const EntityTable({
     super.key,
     required this.items,
     required this.columns,
     required this.idOf,
     required this.isDeleted,
-    required this.selected,
     required this.sortField,
     required this.sortAscending,
-    required this.onToggle,
+    required this.selectedIds,
     required this.onSort,
+    required this.onSelected,
+    required this.onOpen,
+    required this.onEdit,
     required this.onDelete,
     required this.onRestore,
   });
@@ -35,80 +38,120 @@ class EntityTable<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (_, box) {
-      if (box.maxWidth < 600) {
+      if (box.maxWidth < 760) {
         return ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
           itemCount: items.length,
           separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (_, i) {
-            final item = items[i];
+          itemBuilder: (_, index) {
+            final item = items[index];
             return Card(
-              child: CheckboxListTile(
-                value: selected.contains(idOf(item)),
-                onChanged: (_) => onToggle(idOf(item)),
+              child: ListTile(
+                onTap: () => onOpen(item),
+                leading: Checkbox(
+                  value: selectedIds.contains(idOf(item)),
+                  onChanged: (value) => onSelected(item, value ?? false),
+                ),
                 title: Text(columns.first.value(item)),
                 subtitle: Text(
                   columns
                       .skip(1)
-                      .map((c) => '${c.label}: ${c.value(item)}')
+                      .map((column) => '${column.label}: ${column.value(item)}')
                       .join('\n'),
                 ),
-                secondary: IconButton(
-                  icon: Icon(
-                    isDeleted(item) ? Icons.restore : Icons.delete_outline,
-                  ),
-                  onPressed: () =>
-                      isDeleted(item) ? onRestore(item) : onDelete(item),
+                trailing: Wrap(
+                  children: [
+                    if (!isDeleted(item))
+                      IconButton(
+                        tooltip: 'Редактировать',
+                        onPressed: () => onEdit(item),
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                    IconButton(
+                      tooltip: isDeleted(item) ? 'Восстановить' : 'Удалить',
+                      onPressed: () =>
+                          isDeleted(item) ? onRestore(item) : onDelete(item),
+                      icon: Icon(
+                        isDeleted(item) ? Icons.restore : Icons.delete_outline,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             );
           },
         );
       }
-      final sortIndex = columns.indexWhere((c) => c.sortField == sortField);
+      final sortIndex = columns.indexWhere(
+        (column) => column.sortField == sortField,
+      );
       return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          sortAscending: sortAscending,
-          sortColumnIndex: sortIndex < 0 ? null : sortIndex + 1,
-          columns: [
-            const DataColumn(label: Text('Выбор')),
-            ...columns.map(
-              (c) => DataColumn(
-                label: Text(c.label),
-                onSort: (_, __) => onSort(c.sortField),
-              ),
-            ),
-            const DataColumn(label: Text('Действия')),
-          ],
-          rows: items
-              .map(
-                (item) => DataRow(
-                  cells: [
-                    DataCell(
-                      Checkbox(
-                        value: selected.contains(idOf(item)),
-                        onChanged: (_) => onToggle(idOf(item)),
-                      ),
-                    ),
-                    ...columns.map((c) => DataCell(Text(c.value(item)))),
-                    DataCell(
-                      IconButton(
-                        tooltip: isDeleted(item) ? 'Восстановить' : 'Удалить',
-                        icon: Icon(
-                          isDeleted(item)
-                              ? Icons.restore
-                              : Icons.delete_outline,
-                        ),
-                        onPressed: () =>
-                            isDeleted(item) ? onRestore(item) : onDelete(item),
-                      ),
-                    ),
-                  ],
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            sortAscending: sortAscending,
+            sortColumnIndex: sortIndex < 0 ? null : sortIndex,
+            columns: [
+              ...columns.map(
+                (column) => DataColumn(
+                  label: Text(column.label),
+                  onSort: (_, __) => onSort(column.sortField),
                 ),
-              )
-              .toList(),
+              ),
+              const DataColumn(label: Text('Действия')),
+            ],
+            rows: items
+                .map(
+                  (item) => DataRow(
+                    selected: selectedIds.contains(idOf(item)),
+                    onSelectChanged: (value) =>
+                        onSelected(item, value ?? false),
+                    color: isDeleted(item)
+                        ? WidgetStatePropertyAll(
+                            Colors.red.withValues(alpha: 0.06),
+                          )
+                        : null,
+                    cells: [
+                      ...columns.map(
+                        (column) => DataCell(
+                          Text(column.value(item)),
+                          onTap: () => onOpen(item),
+                        ),
+                      ),
+                      DataCell(
+                        Wrap(
+                          children: [
+                            IconButton(
+                              tooltip: 'Открыть',
+                              onPressed: () => onOpen(item),
+                              icon: const Icon(Icons.visibility_outlined),
+                            ),
+                            if (!isDeleted(item))
+                              IconButton(
+                                tooltip: 'Редактировать',
+                                onPressed: () => onEdit(item),
+                                icon: const Icon(Icons.edit_outlined),
+                              ),
+                            IconButton(
+                              tooltip: isDeleted(item)
+                                  ? 'Восстановить'
+                                  : 'Удалить',
+                              onPressed: () => isDeleted(item)
+                                  ? onRestore(item)
+                                  : onDelete(item),
+                              icon: Icon(
+                                isDeleted(item)
+                                    ? Icons.restore
+                                    : Icons.delete_outline,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+                .toList(),
+          ),
         ),
       );
     },
