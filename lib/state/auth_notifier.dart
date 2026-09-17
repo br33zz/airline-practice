@@ -25,6 +25,14 @@ class AuthNotifier extends ChangeNotifier {
 
   AuthNotifier(this.prefs, this.api);
 
+  @visibleForTesting
+  void setTestSession(AppUser user) {
+    _user = user;
+    _accessToken = 'test-access-token';
+    _refreshToken = 'test-refresh-token';
+    _restoring = false;
+  }
+
   AppUser? get user => _user;
   String? get accessToken => _accessToken;
   bool get isAuthenticated => _user != null && _accessToken != null;

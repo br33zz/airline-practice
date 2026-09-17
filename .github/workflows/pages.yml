@@ -1,0 +1,71 @@
+name: Проверка и публикация Flutter Web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@v4
+
+      - name: Установить Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.35.4
+          channel: stable
+          cache: true
+
+      - name: Установить зависимости
+        run: flutter pub get
+
+      - name: Проверить форматирование
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Выполнить статический анализ
+        run: flutter analyze
+
+      - name: Выполнить тесты
+        run: flutter test
+
+      - name: Собрать клиент
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: >-
+          flutter build web --release
+          --base-href /airline-practice/
+          --dart-define=API_BASE_URL=${API_BASE_URL:-http://localhost:8080/api}
+
+      - name: Настроить прямые ссылки
+        run: cp build/web/index.html build/web/404.html
+
+      - name: Настроить GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Подготовить артефакт Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Опубликовать GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

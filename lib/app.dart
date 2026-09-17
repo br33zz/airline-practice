@@ -3,18 +3,53 @@ import 'package:go_router/go_router.dart';
 
 import 'auth/auth_models.dart';
 import 'models/airline_models.dart';
-import 'screens/entity_detail_screen.dart';
-import 'screens/entity_form_screen.dart';
+import 'screens/entity_detail_screen.dart' deferred as detail_screen;
+import 'screens/entity_form_screen.dart' deferred as form_screen;
 import 'screens/entity_list_screen.dart';
 import 'screens/forbidden_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
-import 'screens/role_screens.dart';
+import 'screens/role_screens.dart' deferred as roles;
+import 'screens/admin_screens.dart' deferred as admin;
 import 'state/auth_notifier.dart';
 import 'widgets/session_watcher.dart';
 
 EntityKind _kind(GoRouterState state) =>
     EntityKindUi.tryParse(state.pathParameters['entity']) ?? EntityKind.flights;
+
+class DeferredScreen extends StatefulWidget {
+  final Future<void> Function() loadLibrary;
+  final Widget Function() builder;
+
+  const DeferredScreen({
+    super.key,
+    required this.loadLibrary,
+    required this.builder,
+  });
+
+  @override
+  State<DeferredScreen> createState() => _DeferredScreenState();
+}
+
+class _DeferredScreenState extends State<DeferredScreen> {
+  late final Future<void> loading = widget.loadLibrary();
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<void>(
+    future: loading,
+    builder: (context, snapshot) {
+      if (snapshot.hasError) {
+        return const Scaffold(
+          body: Center(child: Text('Не удалось загрузить раздел.')),
+        );
+      }
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      }
+      return widget.builder();
+    },
+  );
+}
 
 GoRouter buildRouter(AuthNotifier auth) => GoRouter(
   initialLocation: '/flights',
@@ -65,30 +100,60 @@ GoRouter buildRouter(AuthNotifier auth) => GoRouter(
     ),
     GoRoute(path: '/register', builder: (_, __) => const RegisterScreen()),
     GoRoute(path: '/forbidden', builder: (_, __) => const ForbiddenScreen()),
-    GoRoute(path: '/my-booking', builder: (_, __) => const MyBookingScreen()),
-    GoRoute(path: '/operations', builder: (_, __) => const OperationsScreen()),
-    GoRoute(path: '/admin/users', builder: (_, __) => const AdminUsersScreen()),
+    GoRoute(
+      path: '/my-booking',
+      builder: (_, __) => DeferredScreen(
+        loadLibrary: roles.loadLibrary,
+        builder: () => roles.MyBookingScreen(),
+      ),
+    ),
+    GoRoute(
+      path: '/operations',
+      builder: (_, __) => DeferredScreen(
+        loadLibrary: roles.loadLibrary,
+        builder: () => roles.OperationsScreen(),
+      ),
+    ),
+    GoRoute(
+      path: '/admin/users',
+      builder: (_, __) => DeferredScreen(
+        loadLibrary: admin.loadLibrary,
+        builder: () => admin.AdminUsersScreen(),
+      ),
+    ),
     GoRoute(
       path: '/admin/statistics',
-      builder: (_, __) => const StatisticsScreen(),
+      builder: (_, __) => DeferredScreen(
+        loadLibrary: admin.loadLibrary,
+        builder: () => admin.StatisticsScreen(),
+      ),
     ),
     GoRoute(path: '/', redirect: (_, __) => '/flights'),
     GoRoute(
       path: '/:entity/new',
-      builder: (_, state) => EntityFormScreen(kind: _kind(state)),
+      builder: (_, state) => DeferredScreen(
+        loadLibrary: form_screen.loadLibrary,
+        builder: () => form_screen.EntityFormScreen(kind: _kind(state)),
+      ),
     ),
     GoRoute(
       path: '/:entity/:id/edit',
-      builder: (_, state) => EntityFormScreen(
-        kind: _kind(state),
-        id: int.tryParse(state.pathParameters['id'] ?? ''),
+      builder: (_, state) => DeferredScreen(
+        loadLibrary: form_screen.loadLibrary,
+        builder: () => form_screen.EntityFormScreen(
+          kind: _kind(state),
+          id: int.tryParse(state.pathParameters['id'] ?? ''),
+        ),
       ),
     ),
     GoRoute(
       path: '/:entity/:id',
-      builder: (_, state) => EntityDetailScreen(
-        kind: _kind(state),
-        id: int.tryParse(state.pathParameters['id'] ?? '') ?? -1,
+      builder: (_, state) => DeferredScreen(
+        loadLibrary: detail_screen.loadLibrary,
+        builder: () => detail_screen.EntityDetailScreen(
+          kind: _kind(state),
+          id: int.tryParse(state.pathParameters['id'] ?? '') ?? -1,
+        ),
       ),
     ),
     GoRoute(
@@ -125,6 +190,10 @@ class _AirlineAppState extends State<AirlineApp> {
         filled: true,
         fillColor: Colors.white,
       ),
+      dialogTheme: const DialogThemeData(
+        constraints: BoxConstraints(maxWidth: 480),
+      ),
+      focusColor: const Color(0x33155eef),
     ),
     builder: (context, child) => widget.auth.isAuthenticated
         ? SessionWatcher(child: child ?? const SizedBox.shrink())

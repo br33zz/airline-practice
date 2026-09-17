@@ -569,7 +569,7 @@ class _EntityFormScreenState extends State<EntityFormScreen> {
         title: widget.isEditing
             ? 'Редактировать ${widget.kind.singular}'
             : 'Добавить ${widget.kind.singular}',
-        selected: widget.kind,
+        selected: destinationForEntity(widget.kind),
         body: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(20),
@@ -599,8 +599,10 @@ class _EntityFormScreenState extends State<EntityFormScreen> {
                             fields: _simpleFields(),
                             onChanged: markDirty,
                           ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
+                        Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: 12,
+                          runSpacing: 8,
                           children: [
                             TextButton(
                               onPressed: () async {
@@ -611,7 +613,6 @@ class _EntityFormScreenState extends State<EntityFormScreen> {
                               },
                               child: const Text('Отмена'),
                             ),
-                            const SizedBox(width: 12),
                             FilledButton.icon(
                               onPressed: saving ? null : _save,
                               icon: saving

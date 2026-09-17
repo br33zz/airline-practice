@@ -18,7 +18,7 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Система управления авиакомпанией">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -33,6 +33,29 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <div id="app-loading" role="status" aria-live="polite">
+    <div class="loading-mark" aria-hidden="true">✈</div>
+    <div class="loading-title">Авиакомпания</div>
+    <div class="loading-text">Загрузка системы управления</div>
+    <div class="loading-spinner" aria-hidden="true"></div>
+  </div>
+  <style>
+    html, body { height: 100%; margin: 0; background: #f5f7fb; }
+    #app-loading {
+      min-height: 100%; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      color: #102a56; font-family: Arial, sans-serif;
+    }
+    .loading-mark { font-size: 54px; color: #155eef; }
+    .loading-title { font-size: 28px; font-weight: 700; }
+    .loading-text { font-size: 15px; color: #526175; }
+    .loading-spinner {
+      width: 34px; height: 34px; margin-top: 8px; border-radius: 50%;
+      border: 4px solid #c9d7f2; border-top-color: #155eef;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

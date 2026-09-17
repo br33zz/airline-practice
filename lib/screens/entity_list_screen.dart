@@ -296,7 +296,7 @@ class _EntityListScreenState extends State<EntityListScreen> {
     final pageResult = result;
     return AirlineScaffold(
       title: 'Авиакомпания • ${widget.kind.title}',
-      selected: widget.kind,
+      selected: destinationForEntity(widget.kind),
       actions: [
         if (canManage && selectedIds.isNotEmpty)
           IconButton(

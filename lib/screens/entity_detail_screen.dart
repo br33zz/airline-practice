@@ -84,7 +84,7 @@ class EntityDetailScreen extends StatelessWidget {
     final item = repository.byId(kind, id);
     return AirlineScaffold(
       title: 'Карточка • ${kind.title}',
-      selected: kind,
+      selected: destinationForEntity(kind),
       actions: [
         if (canManage && item != null && item.deletedAt == null)
           IconButton(
