@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/auth_models.dart';
 import '../models/airline_models.dart';
 import '../repositories/airline_repository.dart';
+import '../state/auth_notifier.dart';
 import '../widgets/airline_scaffold.dart';
 
 class EntityDetailScreen extends StatelessWidget {
@@ -76,12 +78,15 @@ class EntityDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final repository = context.watch<AirlineRepository>();
+    final canManage = context.watch<AuthNotifier>().has(
+      AppPermission.manageOperations,
+    );
     final item = repository.byId(kind, id);
     return AirlineScaffold(
       title: 'Карточка • ${kind.title}',
       selected: kind,
       actions: [
-        if (item != null && item.deletedAt == null)
+        if (canManage && item != null && item.deletedAt == null)
           IconButton(
             tooltip: 'Редактировать',
             onPressed: () => context.go('/${kind.name}/$id/edit'),
@@ -150,7 +155,7 @@ class EntityDetailScreen extends StatelessWidget {
                                 onPressed: () => context.go('/${kind.name}'),
                                 child: const Text('К списку'),
                               ),
-                              if (item.deletedAt == null) ...[
+                              if (canManage && item.deletedAt == null) ...[
                                 const SizedBox(width: 12),
                                 FilledButton.icon(
                                   onPressed: () =>

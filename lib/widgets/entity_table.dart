@@ -15,8 +15,9 @@ class EntityTable<T> extends StatelessWidget {
   final bool sortAscending;
   final Set<int> selectedIds;
   final ValueChanged<String> onSort;
-  final void Function(T, bool) onSelected;
-  final void Function(T) onOpen, onEdit, onDelete, onRestore;
+  final void Function(T, bool)? onSelected;
+  final void Function(T) onOpen;
+  final void Function(T)? onEdit, onDelete, onRestore;
 
   const EntityTable({
     super.key,
@@ -49,7 +50,9 @@ class EntityTable<T> extends StatelessWidget {
                 onTap: () => onOpen(item),
                 leading: Checkbox(
                   value: selectedIds.contains(idOf(item)),
-                  onChanged: (value) => onSelected(item, value ?? false),
+                  onChanged: onSelected == null
+                      ? null
+                      : (value) => onSelected!(item, value ?? false),
                 ),
                 title: Text(columns.first.value(item)),
                 subtitle: Text(
@@ -60,20 +63,25 @@ class EntityTable<T> extends StatelessWidget {
                 ),
                 trailing: Wrap(
                   children: [
-                    if (!isDeleted(item))
+                    if (!isDeleted(item) && onEdit != null)
                       IconButton(
                         tooltip: 'Редактировать',
-                        onPressed: () => onEdit(item),
+                        onPressed: () => onEdit!(item),
                         icon: const Icon(Icons.edit_outlined),
                       ),
-                    IconButton(
-                      tooltip: isDeleted(item) ? 'Восстановить' : 'Удалить',
-                      onPressed: () =>
-                          isDeleted(item) ? onRestore(item) : onDelete(item),
-                      icon: Icon(
-                        isDeleted(item) ? Icons.restore : Icons.delete_outline,
+                    if ((isDeleted(item) && onRestore != null) ||
+                        (!isDeleted(item) && onDelete != null))
+                      IconButton(
+                        tooltip: isDeleted(item) ? 'Восстановить' : 'Удалить',
+                        onPressed: () => isDeleted(item)
+                            ? onRestore!(item)
+                            : onDelete!(item),
+                        icon: Icon(
+                          isDeleted(item)
+                              ? Icons.restore
+                              : Icons.delete_outline,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -103,8 +111,9 @@ class EntityTable<T> extends StatelessWidget {
                 .map(
                   (item) => DataRow(
                     selected: selectedIds.contains(idOf(item)),
-                    onSelectChanged: (value) =>
-                        onSelected(item, value ?? false),
+                    onSelectChanged: onSelected == null
+                        ? null
+                        : (value) => onSelected!(item, value ?? false),
                     color: isDeleted(item)
                         ? WidgetStatePropertyAll(
                             Colors.red.withValues(alpha: 0.06),
@@ -125,25 +134,27 @@ class EntityTable<T> extends StatelessWidget {
                               onPressed: () => onOpen(item),
                               icon: const Icon(Icons.visibility_outlined),
                             ),
-                            if (!isDeleted(item))
+                            if (!isDeleted(item) && onEdit != null)
                               IconButton(
                                 tooltip: 'Редактировать',
-                                onPressed: () => onEdit(item),
+                                onPressed: () => onEdit!(item),
                                 icon: const Icon(Icons.edit_outlined),
                               ),
-                            IconButton(
-                              tooltip: isDeleted(item)
-                                  ? 'Восстановить'
-                                  : 'Удалить',
-                              onPressed: () => isDeleted(item)
-                                  ? onRestore(item)
-                                  : onDelete(item),
-                              icon: Icon(
-                                isDeleted(item)
-                                    ? Icons.restore
-                                    : Icons.delete_outline,
+                            if ((isDeleted(item) && onRestore != null) ||
+                                (!isDeleted(item) && onDelete != null))
+                              IconButton(
+                                tooltip: isDeleted(item)
+                                    ? 'Восстановить'
+                                    : 'Удалить',
+                                onPressed: () => isDeleted(item)
+                                    ? onRestore!(item)
+                                    : onDelete!(item),
+                                icon: Icon(
+                                  isDeleted(item)
+                                      ? Icons.restore
+                                      : Icons.delete_outline,
+                                ),
                               ),
-                            ),
                           ],
                         ),
                       ),

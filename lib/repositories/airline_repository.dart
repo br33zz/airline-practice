@@ -23,8 +23,6 @@ class LinkedRecordsException extends ConflictException {
 
 class AirlineRepository extends ChangeNotifier {
   final Dio dio;
-  String? _accessToken;
-  Future<void>? _loginFuture;
   Future<void>? _referenceFuture;
   bool _referencesLoaded = false;
   CancelToken? _activeSearch;
@@ -37,8 +35,6 @@ class AirlineRepository extends ChangeNotifier {
 
   AirlineRepository(this.dio);
 
-  String? get accessToken => _accessToken;
-
   Future<void> initialize() async {
     try {
       await _ensureReferences();
@@ -46,17 +42,6 @@ class AirlineRepository extends ChangeNotifier {
       // Экран списка покажет ошибку и позволит повторить запрос.
     }
   }
-
-  Future<void> _ensureLogin() => _loginFuture ??= guard(() async {
-    final response = await dio.post<Map<String, dynamic>>(
-      '/auth/login',
-      data: const {'username': 'admin', 'password': 'admin123'},
-    );
-    _accessToken = response.data?['accessToken']?.toString();
-    if (_accessToken == null) {
-      throw const ServerException('Сервер не вернул токен доступа.');
-    }
-  }).whenComplete(() => _loginFuture = null);
 
   Future<void> _ensureReferences() {
     if (_referencesLoaded) return Future.value();
@@ -168,7 +153,6 @@ class AirlineRepository extends ChangeNotifier {
   }
 
   Future<AirlineModel> save(EntityKind kind, AirlineModel item) async {
-    await _ensureLogin();
     final creating = item.id <= 0 || byId(kind, item.id) == null;
     final response = await guard(
       () => creating
@@ -188,7 +172,6 @@ class AirlineRepository extends ChangeNotifier {
   }
 
   Future<void> delete(EntityKind kind, int id, {bool hard = false}) async {
-    await _ensureLogin();
     await guard(
       () => dio.delete<void>(
         '/${kind.name}/$id',
@@ -204,7 +187,6 @@ class AirlineRepository extends ChangeNotifier {
   }
 
   Future<void> restore(EntityKind kind, int id) async {
-    await _ensureLogin();
     final response = await guard(
       () => dio.post<Map<String, dynamic>>('/${kind.name}/$id/restore'),
     );
@@ -213,7 +195,6 @@ class AirlineRepository extends ChangeNotifier {
   }
 
   Future<int> deleteMany(EntityKind kind, List<int> ids) async {
-    await _ensureLogin();
     final response = await guard(
       () => dio.post<Map<String, dynamic>>(
         '/${kind.name}/bulk-delete',

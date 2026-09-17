@@ -1,4 +1,5 @@
 const http = require('http');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 const args = process.argv.slice(2);
@@ -8,8 +9,28 @@ const option = (name, fallback) => {
 };
 const PORT = Number(option('--port', '8080'));
 const ORIGIN = option('--origin', 'http://localhost:5555');
+const ACCESS_TTL = Number(option('--ttl', '900'));
 const COLLECTIONS = ['flights', 'aircraft', 'pilots', 'services', 'passengers'];
 let db;
+const users = [
+  { id: 1, username: 'reader', password: 'reader123!', name: 'Анна Петрова', role: 'reader' },
+  { id: 2, username: 'operator', password: 'operator123!', name: 'Олег Диспетчеров', role: 'operator' },
+  { id: 3, username: 'admin', password: 'admin123!', name: 'Алексей Администраторов', role: 'admin' },
+];
+const accessTokens = new Map();
+const refreshTokens = new Map();
+
+function publicUser(user) {
+  return { id: user.id, username: user.username, name: user.name, role: user.role };
+}
+
+function issueTokens(user) {
+  const accessToken = crypto.randomBytes(24).toString('hex');
+  const refreshToken = crypto.randomBytes(32).toString('hex');
+  accessTokens.set(accessToken, { userId: user.id, expiresAt: Date.now() + ACCESS_TTL * 1000 });
+  refreshTokens.set(refreshToken, { userId: user.id, expiresAt: Date.now() + 7 * 24 * 3600 * 1000 });
+  return { accessToken, refreshToken, expiresIn: ACCESS_TTL, user: publicUser(user) };
+}
 
 function seed() {
   db = { flights: [], aircraft: [], pilots: [], services: [], passengers: [] };
@@ -123,8 +144,28 @@ async function body(req) {
   }
 }
 
-function authorized(req) {
-  return req.headers.authorization === 'Bearer airline-admin-token';
+function currentUser(req) {
+  const raw = req.headers.authorization || '';
+  const token = raw.startsWith('Bearer ') ? raw.slice(7) : '';
+  const session = accessTokens.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    if (token) accessTokens.delete(token);
+    return null;
+  }
+  return users.find((user) => user.id === session.userId) || null;
+}
+
+function requireUser(req, res, roles) {
+  const user = currentUser(req);
+  if (!user) {
+    fail(res, 401, 'Срок действия токена истёк или вход не выполнен');
+    return null;
+  }
+  if (roles && !roles.includes(user.role)) {
+    fail(res, 403, 'Сервер отклонил операцию: у роли недостаточно прав');
+    return null;
+  }
+  return user;
 }
 
 function validate(collection, value, id) {
@@ -213,16 +254,72 @@ async function handle(req, res, url) {
   }
   if (path === '/api/auth/login' && method === 'POST') {
     const value = await body(req);
-    if (value?.username === 'admin' && value?.password === 'admin123') {
-      return send(res, 200, { accessToken: 'airline-admin-token', expiresIn: 3600, user: { id: 1, role: 'admin' } });
-    }
+    const user = users.find((item) => item.username === String(value?.username || '').trim() && item.password === value?.password);
+    if (user) return send(res, 200, issueTokens(user));
     return fail(res, 401, 'Неверный логин или пароль');
+  }
+  if (path === '/api/auth/register' && method === 'POST') {
+    const value = await body(req);
+    const name = String(value?.name || '').trim();
+    const username = String(value?.username || '').trim();
+    const password = String(value?.password || '');
+    const errors = {};
+    if (!name) errors.name = 'Введите имя';
+    if (!username) errors.username = 'Введите логин';
+    if (users.some((item) => item.username.toLowerCase() === username.toLowerCase())) errors.username = 'Такой логин уже занят';
+    if (password.length < 8 || !/\d/.test(password) || !/[^A-Za-zА-Яа-я0-9]/.test(password)) errors.password = 'Пароль должен содержать минимум 8 символов, цифру и специальный символ';
+    if (Object.keys(errors).length) return send(res, 422, { message: 'Проверьте данные регистрации', errors });
+    const user = { id: Math.max(...users.map((item) => item.id)) + 1, name, username, password, role: 'reader' };
+    users.push(user);
+    return send(res, 201, issueTokens(user));
+  }
+  if (path === '/api/auth/refresh' && method === 'POST') {
+    const value = await body(req);
+    const token = String(value?.refreshToken || '');
+    const session = refreshTokens.get(token);
+    refreshTokens.delete(token);
+    if (!session || session.expiresAt <= Date.now()) return fail(res, 401, 'Токен обновления недействителен');
+    const user = users.find((item) => item.id === session.userId);
+    return user ? send(res, 200, issueTokens(user)) : fail(res, 401, 'Пользователь не найден');
+  }
+  if (path === '/api/auth/me' && method === 'GET') {
+    const user = requireUser(req, res);
+    return user && send(res, 200, publicUser(user));
+  }
+  if (path === '/api/my-booking' && method === 'GET') {
+    const user = requireUser(req, res, ['reader']);
+    if (!user) return;
+    return send(res, 200, { number: `TKT-${10000 + user.id}`, flight: 'SU 310 · Сочи', seat: '12A', validUntil: '30.09.2026' });
+  }
+  if (path === '/api/my-booking/renew' && method === 'POST') {
+    const user = requireUser(req, res, ['reader']);
+    if (!user) return;
+    return send(res, 200, { number: `TKT-${10000 + user.id}`, flight: 'SU 310 · Сочи', seat: '12A', validUntil: '07.10.2026' });
+  }
+  if (path === '/api/admin/users' && method === 'GET') {
+    if (!requireUser(req, res, ['admin'])) return;
+    return send(res, 200, users.map(publicUser));
+  }
+  const rolePath = path.match(/^\/api\/admin\/users\/(\d+)\/role$/);
+  if (rolePath && method === 'PUT') {
+    const admin = requireUser(req, res, ['admin']);
+    if (!admin) return;
+    const target = users.find((item) => item.id === Number(rolePath[1]));
+    const value = await body(req);
+    if (!target) return fail(res, 404, 'Пользователь не найден');
+    if (!['reader', 'operator', 'admin'].includes(value?.role)) return fail(res, 422, 'Неизвестная роль');
+    target.role = value.role;
+    return send(res, 200, publicUser(target));
+  }
+  if (path === '/api/admin/statistics' && method === 'GET') {
+    if (!requireUser(req, res, ['admin'])) return;
+    return send(res, 200, { 'Рейсы': db.flights.length, 'Пассажиры': db.passengers.length, 'Пользователи': users.length });
   }
   const bulk = path.match(/^\/api\/([a-z]+)\/bulk-delete$/);
   if (bulk && method === 'POST') {
     const collection = bulk[1];
     if (!COLLECTIONS.includes(collection)) return fail(res, 404, 'Ресурс не найден');
-    if (!authorized(req)) return fail(res, 401, 'Требуется аутентификация');
+    if (!requireUser(req, res, ['operator'])) return;
     const value = await body(req);
     const ids = Array.isArray(value?.ids) ? value.ids.map(Number) : [];
     if (!ids.length) return send(res, 422, { message: 'Ошибка валидации', errors: { ids: 'Выберите записи' } });
@@ -240,19 +337,22 @@ async function handle(req, res, url) {
   const collection = match[1];
   const id = match[2] ? Number(match[2]) : null;
   const action = match[3];
+  const readRoles = collection === 'flights' || collection === 'services' ? ['reader', 'operator', 'admin'] : ['operator', 'admin'];
+  if (!requireUser(req, res, readRoles)) return;
   if (method === 'GET' && id === null) return send(res, 200, list(collection, query));
   if (method === 'GET' && id !== null) {
     const found = db[collection].find((row) => row.id === id && (query.includeDeleted === 'true' || !row.deletedAt));
     return found ? send(res, 200, found) : fail(res, 404, 'Запись не найдена');
   }
-  if (!authorized(req)) return fail(res, 401, 'Требуется аутентификация');
   if (action === 'restore' && method === 'POST') {
+    if (!requireUser(req, res, ['admin'])) return;
     const found = db[collection].find((row) => row.id === id);
     if (!found) return fail(res, 404, 'Запись не найдена');
     found.deletedAt = null;
     return send(res, 200, found);
   }
   if (method === 'POST' && id === null) {
+    if (!requireUser(req, res, ['operator'])) return;
     const value = await body(req);
     if (!value) return fail(res, 400, 'Некорректный JSON');
     const errors = validate(collection, value, null);
@@ -265,6 +365,7 @@ async function handle(req, res, url) {
   const index = db[collection].findIndex((row) => row.id === id);
   if (index < 0) return fail(res, 404, 'Запись не найдена');
   if (method === 'PUT') {
+    if (!requireUser(req, res, ['operator'])) return;
     const value = await body(req);
     if (!value) return fail(res, 400, 'Некорректный JSON');
     const errors = validate(collection, value, id);
@@ -274,6 +375,7 @@ async function handle(req, res, url) {
   }
   if (method === 'DELETE') {
     const hard = query.hard === 'true';
+    if (!requireUser(req, res, hard ? ['admin'] : ['operator'])) return;
     if (collection === 'aircraft') {
       const linked = db.flights.filter((flight) => flight.aircraftId === id && !flight.deletedAt).length;
       if (linked) return fail(res, 409, `Самолёт используется активными рейсами: ${linked}`);
@@ -304,8 +406,9 @@ const server = http.createServer(async (req, res) => {
   }
   console.log(`${req.method.padEnd(6)} ${url.pathname}${url.search} -> ${res.statusCode} (${Date.now() - started} мс)`);
 });
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`Учебное API «Авиакомпания»: http://localhost:${PORT}/api`);
   console.log(`Разрешённый источник: ${ORIGIN}`);
-  console.log('Учётная запись: admin/admin123');
+  console.log(`Срок действия access-токена: ${ACCESS_TTL} с`);
+  console.log('Учётные записи: reader/reader123!, operator/operator123!, admin/admin123!');
 });

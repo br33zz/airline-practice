@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/auth_models.dart';
 import '../core/api_exceptions.dart';
 import '../models/airline_models.dart';
 import '../models/list_query.dart';
 import '../models/page_result.dart';
 import '../repositories/airline_repository.dart';
+import '../state/auth_notifier.dart';
 import '../widgets/airline_scaffold.dart';
 import '../widgets/entity_table.dart';
 
@@ -285,22 +287,29 @@ class _EntityListScreenState extends State<EntityListScreen> {
   @override
   Widget build(BuildContext context) {
     final repository = context.watch<AirlineRepository>();
+    final auth = context.watch<AuthNotifier>();
+    final canManage =
+        auth.has(AppPermission.manageOperations) ||
+        auth.has(AppPermission.manageDirectories) ||
+        auth.has(AppPermission.managePassengers);
+    final canAdminRecords = auth.has(AppPermission.hardDelete);
     final pageResult = result;
     return AirlineScaffold(
       title: 'Авиакомпания • ${widget.kind.title}',
       selected: widget.kind,
       actions: [
-        if (selectedIds.isNotEmpty)
+        if (canManage && selectedIds.isNotEmpty)
           IconButton(
             tooltip: 'Удалить выбранные (${selectedIds.length})',
             onPressed: _deleteSelected,
             icon: const Icon(Icons.delete_sweep_outlined),
           ),
-        IconButton(
-          tooltip: 'Добавить',
-          onPressed: () => context.go('/${widget.kind.name}/new'),
-          icon: const Icon(Icons.add),
-        ),
+        if (canManage)
+          IconButton(
+            tooltip: 'Добавить',
+            onPressed: () => context.go('/${widget.kind.name}/new'),
+            icon: const Icon(Icons.add),
+          ),
       ],
       body: Center(
         child: ConstrainedBox(
@@ -351,13 +360,14 @@ class _EntityListScreenState extends State<EntityListScreen> {
                         ),
                       ),
                     ),
-                    FilterChip(
-                      label: const Text('Показать удалённые'),
-                      selected: query.includeDeleted,
-                      onSelected: (value) => _apply(
-                        query.copyWith(includeDeleted: value, page: 1),
+                    if (canAdminRecords)
+                      FilterChip(
+                        label: const Text('Показать удалённые'),
+                        selected: query.includeDeleted,
+                        onSelected: (value) => _apply(
+                          query.copyWith(includeDeleted: value, page: 1),
+                        ),
                       ),
-                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -415,21 +425,32 @@ class _EntityListScreenState extends State<EntityListScreen> {
                           ),
                           onOpen: (item) =>
                               context.go('/${widget.kind.name}/${item.id}'),
-                          onSelected: (item, selected) => setState(() {
-                            if (selected) {
-                              selectedIds.add(item.id);
-                            } else {
-                              selectedIds.remove(item.id);
-                            }
-                          }),
-                          onEdit: (item) => context.go(
-                            '/${widget.kind.name}/${item.id}/edit',
-                          ),
-                          onDelete: _delete,
-                          onRestore: (item) async {
-                            await repository.restore(widget.kind, item.id);
-                            await _load();
-                          },
+                          onSelected: canManage
+                              ? (item, selected) => setState(() {
+                                  if (selected) {
+                                    selectedIds.add(item.id);
+                                  } else {
+                                    selectedIds.remove(item.id);
+                                  }
+                                })
+                              : null,
+                          onEdit: canManage
+                              ? (item) => context.go(
+                                  '/${widget.kind.name}/${item.id}/edit',
+                                )
+                              : null,
+                          onDelete: (canManage || canAdminRecords)
+                              ? _delete
+                              : null,
+                          onRestore: canAdminRecords
+                              ? (item) async {
+                                  await repository.restore(
+                                    widget.kind,
+                                    item.id,
+                                  );
+                                  await _load();
+                                }
+                              : null,
                         ),
                 ),
                 if (pageResult != null)

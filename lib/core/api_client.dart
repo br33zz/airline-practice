@@ -4,7 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'api_exceptions.dart';
 import 'config.dart';
 
-Dio buildDio({String? Function()? tokenProvider}) {
+Dio buildDio({
+  String? Function()? tokenProvider,
+  Future<void> Function()? refreshAccessToken,
+  Future<void> Function()? onRefreshFailed,
+}) {
   final dio = Dio(
     BaseOptions(
       baseUrl: apiBaseUrl,
@@ -43,12 +47,31 @@ Dio buildDio({String? Function()? tokenProvider}) {
         }
         handler.next(response);
       },
-      onError: (error, handler) {
+      onError: (error, handler) async {
         if (kDebugMode) {
           debugPrint(
             '[API] ${error.requestOptions.method} '
             '${error.requestOptions.uri} -> ${error.response?.statusCode ?? error.type.name}',
           );
+        }
+        final status = error.response?.statusCode;
+        final path = error.requestOptions.path;
+        final alreadyRetried =
+            error.requestOptions.extra['authRetried'] == true;
+        if (status == 401 &&
+            !path.contains('/auth/') &&
+            !alreadyRetried &&
+            refreshAccessToken != null) {
+          try {
+            await refreshAccessToken();
+            final options = error.requestOptions;
+            options.extra['authRetried'] = true;
+            options.headers['Authorization'] =
+                'Bearer ${tokenProvider?.call()}';
+            return handler.resolve(await dio.fetch(options));
+          } catch (_) {
+            await onRefreshFailed?.call();
+          }
         }
         handler.next(error);
       },

@@ -109,11 +109,9 @@ ResponseBody normalReply(RequestOptions options) {
 }
 
 AirlineRepository makeRepository(FakeAdapter adapter) {
-  late AirlineRepository repository;
-  final dio = buildDio(tokenProvider: () => repository.accessToken)
+  final dio = buildDio(tokenProvider: () => 'test-token')
     ..httpClientAdapter = adapter;
-  repository = AirlineRepository(dio);
-  return repository;
+  return AirlineRepository(dio);
 }
 
 void main() {
